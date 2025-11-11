@@ -1,383 +1,377 @@
-import logging
+# -*- coding: utf-8 -*-
+"""
+TractVRRandomization.py
+Randomisation + plan par participant (JSON) + registry.csv
+Inclut DataRoot/FilePattern/CaseFiles pour chargement auto dans TractDesktop/TractVR.
+Compatible Python 3.9 (Slicer 5.x) : pas d’operator “|” dans les annotations.
+"""
+
 import os
-from typing import Annotated, Optional
+import csv
+import json
+import random
+from datetime import datetime
+from typing import Optional, Dict, List, Tuple  # <-- IMPORTANT pour Python 3.9
 
-import vtk
-
+import qt
 import slicer
 from slicer.i18n import tr as _
-from slicer.i18n import translate
-from slicer.ScriptedLoadableModule import *
-from slicer.util import VTKObservationMixin
-from slicer.parameterNodeWrapper import (
-    parameterNodeWrapper,
-    WithinRange,
+from slicer.ScriptedLoadableModule import (
+    ScriptedLoadableModule,
+    ScriptedLoadableModuleWidget,
+    ScriptedLoadableModuleLogic,
 )
-
-from slicer import vtkMRMLScalarVolumeNode
-
-
-#
-# TractVRRandomization
-#
+from slicer.util import VTKObservationMixin
+from qt import QStandardPaths
 
 
+# --------------------------
+# Emplacements persistants
+# --------------------------
+APP_DATA_DIR = os.path.join(
+    QStandardPaths.writableLocation(QStandardPaths.AppDataLocation),
+    "TractVRRandomization"
+)
+PID_JSON_DIR = os.path.join(APP_DATA_DIR, "by-participant")
+REGISTRY_CSV = os.path.join(APP_DATA_DIR, "registry.csv")
+os.makedirs(PID_JSON_DIR, exist_ok=True)
+
+REGISTRY_HEADER = [
+    "CreatedAtISO", "ParticipantID",
+    "Session1_Mode", "Session2_Mode",
+    "Session1_TaskOrder", "Session2_TaskOrder",
+    "DataRoot", "FilePattern", "HasCaseFiles"
+]
+
+
+# ==========================================================
+# Module
+# ==========================================================
 class TractVRRandomization(ScriptedLoadableModule):
-    """Uses ScriptedLoadableModule base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
     def __init__(self, parent):
-        ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = _("TractVRRandomization")  # TODO: make this more human readable by adding spaces
-        # TODO: set categories (folders where the module shows up in the module selector)
-        self.parent.categories = [translate("qSlicerAbstractCoreModule", "Examples")]
-        self.parent.dependencies = []  # TODO: add here list of module names that this module requires
-        self.parent.contributors = ["John Doe (AnyWare Corp.)"]  # TODO: replace with "Firstname Lastname (Organization)"
-        # TODO: update with short description of the module and a link to online module documentation
-        # _() function marks text as translatable to other languages
-        self.parent.helpText = _("""
-This is an example of scripted loadable module bundled in an extension.
-See more information in <a href="https://github.com/organization/projectname#TractVRRandomization">module documentation</a>.
-""")
-        # TODO: replace with organization, grant and thanks
-        self.parent.acknowledgementText = _("""
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
-""")
-
-        # Additional initialization step after application startup is complete
-        slicer.app.connect("startupCompleted()", registerSampleData)
+        super().__init__(parent)
+        self.parent.title = _("TractVRRandomization")
+        self.parent.categories = ["Utilities"]
+        self.parent.dependencies = []
+        self.parent.contributors = ["Tina N. H. N."]
+        self.parent.helpText = _(
+            "Génère des plans randomisés par participant (Desktop/VR), "
+            "sauvegarde un JSON, maintient un registre CSV, et peut renseigner "
+            "DataRoot/FilePattern/CaseFiles pour chargement automatique des fibres."
+        )
+        self.parent.acknowledgementText = _("Merci à 3D Slicer / Kitware / ÉTS")
 
 
-#
-# Register sample data sets in Sample Data module
-#
-
-
-def registerSampleData():
-    """Add data sets to Sample Data module."""
-    # It is always recommended to provide sample data for users to make it easy to try the module,
-    # but if no sample data is available then this method (and associated startupCompeted signal connection) can be removed.
-
-    import SampleData
-
-    iconsPath = os.path.join(os.path.dirname(__file__), "Resources/Icons")
-
-    # To ensure that the source code repository remains small (can be downloaded and installed quickly)
-    # it is recommended to store data sets that are larger than a few MB in a Github release.
-
-    # TractVRRandomization1
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="TractVRRandomization",
-        sampleName="TractVRRandomization1",
-        # Thumbnail should have size of approximately 260x280 pixels and stored in Resources/Icons folder.
-        # It can be created by Screen Capture module, "Capture all views" option enabled, "Number of images" set to "Single".
-        thumbnailFileName=os.path.join(iconsPath, "TractVRRandomization1.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        fileNames="TractVRRandomization1.nrrd",
-        # Checksum to ensure file integrity. Can be computed by this command:
-        #  import hashlib; print(hashlib.sha256(open(filename, "rb").read()).hexdigest())
-        checksums="SHA256:998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        # This node name will be used when the data set is loaded
-        nodeNames="TractVRRandomization1",
-    )
-
-    # TractVRRandomization2
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="TractVRRandomization",
-        sampleName="TractVRRandomization2",
-        thumbnailFileName=os.path.join(iconsPath, "TractVRRandomization2.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        fileNames="TractVRRandomization2.nrrd",
-        checksums="SHA256:1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        # This node name will be used when the data set is loaded
-        nodeNames="TractVRRandomization2",
-    )
-
-
-#
-# TractVRRandomizationParameterNode
-#
-
-
-@parameterNodeWrapper
-class TractVRRandomizationParameterNode:
-    """
-    The parameters needed by module.
-
-    inputVolume - The volume to threshold.
-    imageThreshold - The value at which to threshold the input volume.
-    invertThreshold - If true, will invert the threshold.
-    thresholdedVolume - The output volume that will contain the thresholded volume.
-    invertedVolume - The output volume that will contain the inverted thresholded volume.
-    """
-
-    inputVolume: vtkMRMLScalarVolumeNode
-    imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
-    invertThreshold: bool = False
-    thresholdedVolume: vtkMRMLScalarVolumeNode
-    invertedVolume: vtkMRMLScalarVolumeNode
-
-
-#
-# TractVRRandomizationWidget
-#
-
-
+# ==========================================================
+# Widget (GUI branchée sur ton .ui)
+# ==========================================================
 class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
-    """Uses ScriptedLoadableModuleWidget base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
 
     def __init__(self, parent=None) -> None:
-        """Called when the user opens the module the first time and the widget is initialized."""
-        ScriptedLoadableModuleWidget.__init__(self, parent)
-        VTKObservationMixin.__init__(self)  # needed for parameter node observation
+        super().__init__(parent)
+        VTKObservationMixin.__init__(self)
         self.logic = None
-        self._parameterNode = None
-        self._parameterNodeGuiTag = None
+        self.ui = None
 
+    # ---------- Helpers UI compatibles Qt ----------
+    def _ask_text(self, title, label, default=""):
+        """Retourne (text, ok) de manière robuste selon bindings Qt."""
+        out = qt.QInputDialog.getText(slicer.util.mainWindow(), title, label, qt.QLineEdit.Normal, default)
+        if isinstance(out, tuple):
+            # (str, ok)
+            if len(out) >= 2:
+                return str(out[0]), bool(out[1])
+            return str(out[0]), True
+        # PySide peut renvoyer juste un str (rare) -> on considère ok=True si non vide
+        return str(out), True if out else False
+
+    def _ask_multiline(self, title, label, default=""):
+        """Retourne (text, ok) pour getMultiLineText sans se tromper de signature."""
+        out = qt.QInputDialog.getMultiLineText(slicer.util.mainWindow(), title, label, default)
+        if isinstance(out, tuple):
+            # (str, ok)
+            if len(out) >= 2:
+                return str(out[0]), bool(out[1])
+            return str(out[0]), True
+        return str(out), True if out else False
+
+    def _choose_dir(self, start_dir=""):
+        dlg = qt.QFileDialog(slicer.util.mainWindow(), "Choisir un dossier de données")
+        dlg.setFileMode(qt.QFileDialog.Directory)
+        if start_dir and os.path.isdir(start_dir):
+            dlg.setDirectory(start_dir)
+        if dlg.exec_():
+            sel = dlg.selectedFiles()
+            if sel:
+                return sel[0]
+        return ""
+
+    # ---------- Setup ----------
     def setup(self) -> None:
-        """Called when the user opens the module the first time and the widget is initialized."""
-        ScriptedLoadableModuleWidget.setup(self)
+        """Charge le .ui et connecte les boutons."""
+        super().setup()
 
-        # Load widget from .ui file (created by Qt Designer).
-        # Additional widgets can be instantiated manually and added to self.layout.
         uiWidget = slicer.util.loadUI(self.resourcePath("UI/TractVRRandomization.ui"))
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
-
-        # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
-        # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
-        # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
 
-        # Create logic class. Logic implements all computations that should be possible to run
-        # in batch mode, without a graphical user interface.
         self.logic = TractVRRandomizationLogic()
 
-        # Connections
+        # Boutons (assignButton obligatoire)
+        if not hasattr(self.ui, "assignButton"):
+            raise RuntimeError("Ton .ui doit contenir un bouton 'assignButton' (ObjectName).")
+        self.ui.assignButton.clicked.connect(self.onAssignParticipant)
 
-        # These connections ensure that we update parameter node when scene is closed
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+        if hasattr(self.ui, "openFolderButton"):
+            self.ui.openFolderButton.clicked.connect(self.onOpenFolder)
 
-        # Buttons
-        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        if hasattr(self.ui, "browseDataRootButton"):
+            self.ui.browseDataRootButton.clicked.connect(self.onBrowseDataRoot)
 
-        # Make sure parameter node is initialized (needed for module reload)
-        self.initializeParameterNode()
+        self._log(f"Dossier AppData : {APP_DATA_DIR}")
+        self._ensure_registry_header()
+        d, v = self.logic.count_balance_session1()
+        self._log(f"Équilibrage actuel Session 1 → Desktop: {d} / VR: {v}")
 
-    def cleanup(self) -> None:
-        """Called when the application closes and the module widget is destroyed."""
-        self.removeObservers()
-
-    def enter(self) -> None:
-        """Called each time the user opens this module."""
-        # Make sure parameter node exists and observed
-        self.initializeParameterNode()
-
-    def exit(self) -> None:
-        """Called each time the user opens a different module."""
-        # Do not react to parameter node changes (GUI will be updated when the user enters into the module)
-        if self._parameterNode:
-            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self._parameterNodeGuiTag = None
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-
-    def onSceneStartClose(self, caller, event) -> None:
-        """Called just before the scene is closed."""
-        # Parameter node will be reset, do not use it anymore
-        self.setParameterNode(None)
-
-    def onSceneEndClose(self, caller, event) -> None:
-        """Called just after the scene is closed."""
-        # If this module is shown while the scene is closed then recreate a new parameter node immediately
-        if self.parent.isEntered:
-            self.initializeParameterNode()
-
-    def initializeParameterNode(self) -> None:
-        """Ensure parameter node exists and observed."""
-        # Parameter node stores all user choices in parameter values, node selections, etc.
-        # so that when the scene is saved and reloaded, these settings are restored.
-
-        self.setParameterNode(self.logic.getParameterNode())
-
-        # Select default input nodes if nothing is selected yet to save a few clicks for the user
-        if not self._parameterNode.inputVolume:
-            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-            if firstVolumeNode:
-                self._parameterNode.inputVolume = firstVolumeNode
-
-    def setParameterNode(self, inputParameterNode: Optional[TractVRRandomizationParameterNode]) -> None:
-        """
-        Set and observe parameter node.
-        Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
-        """
-
-        if self._parameterNode:
-            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-        self._parameterNode = inputParameterNode
-        if self._parameterNode:
-            # Note: in the .ui file, a Qt dynamic property called "SlicerParameterName" is set on each
-            # ui element that needs connection.
-            self._parameterNodeGuiTag = self._parameterNode.connectGui(self.ui)
-            self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-            self._checkCanApply()
-
-    def _checkCanApply(self, caller=None, event=None) -> None:
-        if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.thresholdedVolume:
-            self.ui.applyButton.toolTip = _("Compute output volume")
-            self.ui.applyButton.enabled = True
+    def _log(self, text: str):
+        if hasattr(self.ui, "statusText") and self.ui.statusText:
+            try:
+                self.ui.statusText.append(text)
+            except Exception:
+                print(text)
         else:
-            self.ui.applyButton.toolTip = _("Select input and output volume nodes")
-            self.ui.applyButton.enabled = False
+            print(text)
 
-    def onApplyButton(self) -> None:
-        """Run processing when user clicks "Apply" button."""
-        with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
+    def _ensure_registry_header(self):
+        if not os.path.exists(REGISTRY_CSV):
+            os.makedirs(APP_DATA_DIR, exist_ok=True)
+            with open(REGISTRY_CSV, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(REGISTRY_HEADER)
+            self._log("Registre créé (nouveau).")
 
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
+    def onOpenFolder(self):
+        qt.QDesktopServices.openUrl(qt.QUrl.fromLocalFile(APP_DATA_DIR))
+
+    def onBrowseDataRoot(self):
+        start = ""
+        if hasattr(self.ui, "dataRootLineEdit") and self.ui.dataRootLineEdit:
+            start = self.ui.dataRootLineEdit.text.strip()
+        path = self._choose_dir(start)
+        if path and hasattr(self.ui, "dataRootLineEdit") and self.ui.dataRootLineEdit:
+            self.ui.dataRootLineEdit.text = path
+
+    # ---------- Action principale : générer un plan ----------
+    def onAssignParticipant(self):
+        # 1) Cas
+        cases: List[str] = []
+        if hasattr(self.ui, "casesLineEdit") and self.ui.casesLineEdit:
+            text = (self.ui.casesLineEdit.text or "").strip()
+            if text:
+                cases = [c.strip() for c in text.split(",") if c.strip()]
+
+        if not cases:
+            casesCsv, ok = self._ask_multiline(
+                "Liste des cas",
+                "Entrez les identifiants de cas (séparés par des virgules)\n"
+                "ex: AF_left,AF_right,CST_left,CST_right,IFOF_left,IFOF_right",
+                "AF_left,AF_right,CST_left,CST_right,IFOF_left,IFOF_right,ILF_left,ILF_right,UF_left,UF_right"
+            )
+            if not ok:
+                return
+            cases = [c.strip() for c in (casesCsv or "").split(",") if c.strip()]
+
+        if not cases:
+            slicer.util.errorDisplay("Aucun cas valide.")
+            return
+
+        # 2) ParticipantID
+        pid = ""
+        if hasattr(self.ui, "pidLineEdit") and self.ui.pidLineEdit:
+            pid = (self.ui.pidLineEdit.text or "").strip()
+        if not pid:
+            pidText, ok = self._ask_text("ParticipantID (optionnel)", "Laisser vide pour auto-générer (ex: P20251110-001) :", "")
+            if not ok:
+                return
+            pid = (pidText or "").strip()
+        if not pid:
+            pid = self.logic.make_participant_id()
+
+        # 3) DataRoot / FilePattern (optionnels)
+        dataRoot = ""
+        if hasattr(self.ui, "dataRootLineEdit") and self.ui.dataRootLineEdit:
+            dataRoot = (self.ui.dataRootLineEdit.text or "").strip()
+        if not dataRoot:
+            dataRoot, ok = self._ask_text("Dossier des fibres (optionnel)", "Chemin du dossier contenant les fichiers de fibres :", "")
+            if not ok:
+                dataRoot = ""
+        filePattern = ""
+        if hasattr(self.ui, "filePatternLineEdit") and self.ui.filePatternLineEdit:
+            filePattern = (self.ui.filePatternLineEdit.text or "").strip()
+        if not filePattern and dataRoot:
+            filePattern, ok = self._ask_text("Pattern de fichier (optionnel)",
+                                             "Utilise {case} comme placeholder. Ex: {case}.vtp ou {case}.vtk",
+                                             "{case}.vtp")
+            if not ok:
+                filePattern = ""
+
+        # 4) CaseFiles si dataRoot+pattern sont fournis
+        caseFiles: Optional[Dict[str, str]] = None
+        if dataRoot and filePattern:
+            mapping: Dict[str, str] = {}
+            for c in cases:
+                p = os.path.join(dataRoot, filePattern.format(case=c))
+                mapping[c] = p
+            caseFiles = mapping
+
+        # 5) Générer plan
+        try:
+            plan = self.logic.make_random_plan(
+                cases=cases, participant_id=pid,
+                data_root=dataRoot, file_pattern=filePattern,
+                case_files=caseFiles
+            )
+        except Exception as e:
+            slicer.util.errorDisplay(f"Erreur lors de la randomisation: {e}")
+            return
+
+        # 6) Feedback
+        self._log(f"✅ Participant: {plan['ParticipantID']}")
+        self._log(f"Session1_Mode: {plan['Session1_Mode']}")
+        self._log(f"Session2_Mode: {plan['Session2_Mode']}")
+        self._log(f"S1 Order: {', '.join(plan['Session1_TaskOrder'])}")
+        self._log(f"S2 Order: {', '.join(plan['Session2_TaskOrder'])}")
+        if plan.get("DataRoot"):
+            self._log(f"DataRoot: {plan['DataRoot']}")
+        if plan.get("FilePattern"):
+            self._log(f"FilePattern: {plan['FilePattern']}")
+        if plan.get("CaseFiles"):
+            self._log("CaseFiles: défini")
+        self._log(f"JSON: {os.path.join(PID_JSON_DIR, pid + '.json')}")
+        self._log("Plan enregistré.\n")
+
+        qt.QMessageBox.information(
+            slicer.util.mainWindow(),
+            "TractVRRandomization",
+            f"Plan généré pour {pid}\n"
+            f"- {plan['Session1_Mode']} : {', '.join(plan['Session1_TaskOrder'])}\n"
+            f"- {plan['Session2_Mode']} : {', '.join(plan['Session2_TaskOrder'])}\n\n"
+            f"Le JSON a été sauvegardé."
+        )
 
 
-#
-# TractVRRandomizationLogic
-#
-
-
+# ==========================================================
+# Logic (aucune dépendance UI)
+# ==========================================================
 class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
-    """This class should implement all the actual
-    computation done by your module.  The interface
-    should be such that other python code can import
-    this class and make use of the functionality without
-    requiring an instance of the Widget.
-    Uses ScriptedLoadableModuleLogic base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
+    """
+    - fabrique un ParticipantID unique (par jour : PYYYYMMDD-###)
+    - équilibre Session1 (Desktop/VR) via le registre
+    - randomise 2 ordres de cas (S1 et S2)
+    - sauvegarde JSON + ligne dans le registre
+    - enregistre éventuellement DataRoot/FilePattern/CaseFiles
     """
 
-    def __init__(self) -> None:
-        """Called when the logic class is instantiated. Can be used for initializing member variables."""
-        ScriptedLoadableModuleLogic.__init__(self)
+    def __init__(self):
+        super().__init__()
+        os.makedirs(PID_JSON_DIR, exist_ok=True)
+        if not os.path.exists(REGISTRY_CSV):
+            with open(REGISTRY_CSV, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(REGISTRY_HEADER)
 
-    def getParameterNode(self):
-        return TractVRRandomizationParameterNode(super().getParameterNode())
+    # ID : PYYYYMMDD-###
+    def make_participant_id(self) -> str:
+        today = datetime.now().strftime("%Y%m%d")
+        counter = 0
+        if os.path.exists(REGISTRY_CSV):
+            with open(REGISTRY_CSV, "r", encoding="utf-8") as f:
+                r = csv.DictReader(f)
+                for row in r:
+                    pid = row.get("ParticipantID", "")
+                    if pid.startswith(f"P{today}-"):
+                        counter += 1
+        return f"P{today}-{counter+1:03d}"
 
-    def process(self,
-                inputVolume: vtkMRMLScalarVolumeNode,
-                outputVolume: vtkMRMLScalarVolumeNode,
-                imageThreshold: float,
-                invert: bool = False,
-                showResult: bool = True) -> None:
-        """
-        Run the processing algorithm.
-        Can be used without GUI widget.
-        :param inputVolume: volume to be thresholded
-        :param outputVolume: thresholding result
-        :param imageThreshold: values above/below this threshold will be set to 0
-        :param invert: if True then values above the threshold will be set to 0, otherwise values below are set to 0
-        :param showResult: show output volume in slice viewers
-        """
+    # Équilibrage Session 1
+    def count_balance_session1(self):
+        s1d = s1v = 0
+        if os.path.exists(REGISTRY_CSV):
+            with open(REGISTRY_CSV, "r", encoding="utf-8") as f:
+                r = csv.DictReader(f)
+                for row in r:
+                    m = row.get("Session1_Mode", "")
+                    if m == "Desktop":
+                        s1d += 1
+                    elif m == "VR":
+                        s1v += 1
+        return s1d, s1v
 
-        if not inputVolume or not outputVolume:
-            raise ValueError("Input or output volume is invalid")
+    def _choose_s1_mode_balanced(self) -> str:
+        s1d, s1v = self.count_balance_session1()
+        if s1d < s1v:
+            return "Desktop"
+        if s1v < s1d:
+            return "VR"
+        return random.choice(["Desktop", "VR"])
 
-        import time
+    # Plan
+    def make_random_plan(self, cases: List[str], participant_id: str,
+                         data_root: str = "", file_pattern: str = "",
+                         case_files: Optional[Dict[str, str]] = None) -> dict:
+        if not cases:
+            raise ValueError("Liste de cas vide")
 
-        startTime = time.time()
-        logging.info("Processing started")
+        s1_mode = self._choose_s1_mode_balanced()
+        s2_mode = "VR" if s1_mode == "Desktop" else "Desktop"
 
-        # Compute the thresholded output volume using the "Threshold Scalar Volume" CLI module
-        cliParams = {
-            "InputVolume": inputVolume.GetID(),
-            "OutputVolume": outputVolume.GetID(),
-            "ThresholdValue": imageThreshold,
-            "ThresholdType": "Above" if invert else "Below",
+        s1_order = list(cases); random.shuffle(s1_order)
+        s2_order = list(cases); random.shuffle(s2_order)
+
+        plan = {
+            "ParticipantID": participant_id,
+            "CreatedAt": datetime.now().isoformat(timespec="seconds"),
+            "Session1_Mode": s1_mode,
+            "Session2_Mode": s2_mode,
+            "Session1_TaskOrder": s1_order,
+            "Session2_TaskOrder": s2_order,
         }
-        cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
-        # We don't need the CLI module node anymore, remove it to not clutter the scene with it
-        slicer.mrmlScene.RemoveNode(cliNode)
 
-        stopTime = time.time()
-        logging.info(f"Processing completed in {stopTime-startTime:.2f} seconds")
+        # Métadonnées pour chargement automatique
+        if data_root:
+            plan["DataRoot"] = data_root
+        if file_pattern:
+            plan["FilePattern"] = file_pattern
+        if case_files:
+            plan["CaseFiles"] = case_files  # dict: {caseName: absolutePath}
 
+        # Sauvegardes
+        self._save_plan_json(plan)
+        self._append_registry(plan)
+        return plan
 
-#
-# TractVRRandomizationTest
-#
+    # I/O
+    def _save_plan_json(self, plan: dict):
+        path = os.path.join(PID_JSON_DIR, plan["ParticipantID"] + ".json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(plan, f, indent=2, ensure_ascii=False)
 
-
-class TractVRRandomizationTest(ScriptedLoadableModuleTest):
-    """
-    This is the test case for your scripted module.
-    Uses ScriptedLoadableModuleTest base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
-    def setUp(self):
-        """Do whatever is needed to reset the state - typically a scene clear will be enough."""
-        slicer.mrmlScene.Clear()
-
-    def runTest(self):
-        """Run as few or as many tests as needed here."""
-        self.setUp()
-        self.test_TractVRRandomization1()
-
-    def test_TractVRRandomization1(self):
-        """Ideally you should have several levels of tests.  At the lowest level
-        tests should exercise the functionality of the logic with different inputs
-        (both valid and invalid).  At higher levels your tests should emulate the
-        way the user would interact with your code and confirm that it still works
-        the way you intended.
-        One of the most important features of the tests is that it should alert other
-        developers when their changes will have an impact on the behavior of your
-        module.  For example, if a developer removes a feature that you depend on,
-        your test should break so they know that the feature is needed.
-        """
-
-        self.delayDisplay("Starting the test")
-
-        # Get/create input data
-
-        import SampleData
-
-        registerSampleData()
-        inputVolume = SampleData.downloadSample("TractVRRandomization1")
-        self.delayDisplay("Loaded test data set")
-
-        inputScalarRange = inputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(inputScalarRange[0], 0)
-        self.assertEqual(inputScalarRange[1], 695)
-
-        outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-        threshold = 100
-
-        # Test the module logic
-
-        logic = TractVRRandomizationLogic()
-
-        # Test algorithm with non-inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, True)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], threshold)
-
-        # Test algorithm with inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, False)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], inputScalarRange[1])
-
-        self.delayDisplay("Test passed")
+    def _append_registry(self, plan: dict):
+        exists = os.path.exists(REGISTRY_CSV)
+        if not exists:
+            with open(REGISTRY_CSV, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f); w.writerow(REGISTRY_HEADER)
+        with open(REGISTRY_CSV, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow([
+                plan.get("CreatedAt", ""),
+                plan["ParticipantID"],
+                plan["Session1_Mode"],
+                plan["Session2_Mode"],
+                ",".join(plan["Session1_TaskOrder"]),
+                ",".join(plan["Session2_TaskOrder"]),
+                plan.get("DataRoot", ""),
+                plan.get("FilePattern", ""),
+                "1" if plan.get("CaseFiles") else "0",
+            ])
