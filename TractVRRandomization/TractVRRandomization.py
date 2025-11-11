@@ -22,14 +22,14 @@ from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModuleLogic,
 )
 from slicer.util import VTKObservationMixin
-from qt import QStandardPaths
+
 
 
 # --------------------------
 # Emplacements persistants
 # --------------------------
 APP_DATA_DIR = os.path.join(
-    QStandardPaths.writableLocation(QStandardPaths.AppDataLocation),
+    qt.QStandardPaths.writableLocation(qt.QStandardPaths.AppDataLocation),
     "TractVRRandomization"
 )
 PID_JSON_DIR = os.path.join(APP_DATA_DIR, "by-participant")
@@ -164,7 +164,7 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
     # ---------- Action principale : générer un plan ----------
     def onAssignParticipant(self):
-        # 1) Cas
+        # 1) Cas (on récupère ce que l’utilisateur fournit)
         cases: List[str] = []
         if hasattr(self.ui, "casesLineEdit") and self.ui.casesLineEdit:
             text = (self.ui.casesLineEdit.text or "").strip()
@@ -175,16 +175,22 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             casesCsv, ok = self._ask_multiline(
                 "Liste des cas",
                 "Entrez les identifiants de cas (séparés par des virgules)\n"
-                "ex: AF_left,AF_right,CST_left,CST_right,IFOF_left,IFOF_right",
-                "AF_left,AF_right,CST_left,CST_right,IFOF_left,IFOF_right,ILF_left,ILF_right,UF_left,UF_right"
+                "ex: AF_left,AF_right,CST_left,CST_right",
+                "AF_left,AF_right,CST_left,CST_right"
             )
             if not ok:
                 return
             cases = [c.strip() for c in (casesCsv or "").split(",") if c.strip()]
 
-        if not cases:
-            slicer.util.errorDisplay("Aucun cas valide.")
+        # --- NOUVEAU : on force une base de 4 cas ---
+        if len(cases) < 4:
+            slicer.util.errorDisplay("Il faut au moins 4 cas pour construire 6 essais (avec 2 répétitions).")
             return
+        if len(cases) > 4:
+            base_cases = random.sample(cases, 4)
+            self._log(f"Plus de 4 cas fournis → 4 tirés au hasard: {', '.join(base_cases)}")
+        else:
+            base_cases = list(cases)
 
         # 2) ParticipantID
         pid = ""
@@ -216,19 +222,19 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             if not ok:
                 filePattern = ""
 
-        # 4) CaseFiles si dataRoot+pattern sont fournis
+        # 4) CaseFiles si dataRoot+pattern sont fournis (pour les 4 cas de base uniquement)
         caseFiles: Optional[Dict[str, str]] = None
         if dataRoot and filePattern:
             mapping: Dict[str, str] = {}
-            for c in cases:
+            for c in base_cases:
                 p = os.path.join(dataRoot, filePattern.format(case=c))
                 mapping[c] = p
             caseFiles = mapping
 
-        # 5) Générer plan
+        # 5) Générer plan (avec contrainte 4 → 6 = 4 + 2 répétitions)
         try:
-            plan = self.logic.make_random_plan(
-                cases=cases, participant_id=pid,
+            plan = self.logic.make_random_plan_with_repeats(
+                base_cases=base_cases, participant_id=pid,
                 data_root=dataRoot, file_pattern=filePattern,
                 case_files=caseFiles
             )
@@ -238,23 +244,27 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
         # 6) Feedback
         self._log(f"✅ Participant: {plan['ParticipantID']}")
+        self._log(f"BaseCases (4): {', '.join(plan['BaseCases'])}")
+        self._log(f"SixCases (6): {', '.join(plan['SixCases'])}")
         self._log(f"Session1_Mode: {plan['Session1_Mode']}")
         self._log(f"Session2_Mode: {plan['Session2_Mode']}")
-        self._log(f"S1 Order: {', '.join(plan['Session1_TaskOrder'])}")
-        self._log(f"S2 Order: {', '.join(plan['Session2_TaskOrder'])}")
+        self._log(f"S1 Order (6): {', '.join(plan['Session1_TaskOrder'])}")
+        self._log(f"S2 Order (6): {', '.join(plan['Session2_TaskOrder'])}")
         if plan.get("DataRoot"):
             self._log(f"DataRoot: {plan['DataRoot']}")
         if plan.get("FilePattern"):
             self._log(f"FilePattern: {plan['FilePattern']}")
         if plan.get("CaseFiles"):
-            self._log("CaseFiles: défini")
-        self._log(f"JSON: {os.path.join(PID_JSON_DIR, pid + '.json')}")
+            self._log("CaseFiles: défini (4 cas de base)")
+        self._log(f"JSON: {os.path.join(PID_JSON_DIR, plan['ParticipantID'] + '.json')}")
         self._log("Plan enregistré.\n")
 
         qt.QMessageBox.information(
             slicer.util.mainWindow(),
             "TractVRRandomization",
-            f"Plan généré pour {pid}\n"
+            f"Plan généré pour {plan['ParticipantID']}\n"
+            f"- BaseCases (4) : {', '.join(plan['BaseCases'])}\n"
+            f"- SixCases  (6) : {', '.join(plan['SixCases'])}\n\n"
             f"- {plan['Session1_Mode']} : {', '.join(plan['Session1_TaskOrder'])}\n"
             f"- {plan['Session2_Mode']} : {', '.join(plan['Session2_TaskOrder'])}\n\n"
             f"Le JSON a été sauvegardé."
@@ -295,7 +305,7 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
         return f"P{today}-{counter+1:03d}"
 
     # Équilibrage Session 1
-    def count_balance_session1(self):
+    def count_balance_session1(self) -> Tuple[int, int]:
         s1d = s1v = 0
         if os.path.exists(REGISTRY_CSV):
             with open(REGISTRY_CSV, "r", encoding="utf-8") as f:
@@ -316,22 +326,41 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
             return "VR"
         return random.choice(["Desktop", "VR"])
 
-    # Plan
-    def make_random_plan(self, cases: List[str], participant_id: str,
-                         data_root: str = "", file_pattern: str = "",
-                         case_files: Optional[Dict[str, str]] = None) -> dict:
-        if not cases:
-            raise ValueError("Liste de cas vide")
+    # --------- NOUVEAU : plan avec 4 cas de base + 2 répétitions (sans remise) ---------
+    def make_random_plan_with_repeats(
+        self,
+        base_cases: List[str],
+        participant_id: str,
+        data_root: str = "",
+        file_pattern: str = "",
+        case_files: Optional[Dict[str, str]] = None
+    ) -> dict:
+        """
+        Contrainte :
+          - base_cases: exactement 4 cas distincts (sinon ValueError)
+          - on crée six_cases = base_cases + 2 cas répétés tirés SANS remise (donc 2 cas distincts sont répétés 1x)
+          - Session1/Session2 utilisent la même 'six_cases' mais dans un ordre différent
+        """
+        if len(base_cases) != 4:
+            raise ValueError("base_cases doit contenir exactement 4 cas.")
 
+        # Tirer 2 cas distincts à répéter une fois chacun
+        repeats = random.sample(base_cases, 2)   # sans remise → 2 cas distincts
+        six_cases = list(base_cases) + repeats   # total = 6 (avec 2 répétitions)
+
+        # Modes de session équilibrés
         s1_mode = self._choose_s1_mode_balanced()
         s2_mode = "VR" if s1_mode == "Desktop" else "Desktop"
 
-        s1_order = list(cases); random.shuffle(s1_order)
-        s2_order = list(cases); random.shuffle(s2_order)
+        # Deux ordres indépendants (mêmes 6 cas, ordres différents)
+        s1_order = random.sample(six_cases, k=len(six_cases))
+        s2_order = random.sample(six_cases, k=len(six_cases))
 
         plan = {
             "ParticipantID": participant_id,
             "CreatedAt": datetime.now().isoformat(timespec="seconds"),
+            "BaseCases": base_cases,   # 4 cas
+            "SixCases": six_cases,     # 6 cas (4 + 2 répétés)
             "Session1_Mode": s1_mode,
             "Session2_Mode": s2_mode,
             "Session1_TaskOrder": s1_order,
@@ -344,7 +373,8 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
         if file_pattern:
             plan["FilePattern"] = file_pattern
         if case_files:
-            plan["CaseFiles"] = case_files  # dict: {caseName: absolutePath}
+            # mapping seulement pour les 4 cas de base : les répétitions réutilisent le même nom de cas
+            plan["CaseFiles"] = case_files  # dict: {caseName: absolutePath} pour les 4
 
         # Sauvegardes
         self._save_plan_json(plan)
