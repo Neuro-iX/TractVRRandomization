@@ -175,8 +175,8 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             casesCsv, ok = self._ask_multiline(
                 "Liste des cas",
                 "Entrez les identifiants de cas (séparés par des virgules)\n"
-                "ex: AF_left,AF_right,CST_left,CST_right",
-                "AF_left,AF_right,CST_left,CST_right"
+                "ex: FiberBundle1,FiberBundle2,FiberBundle3,FiberBundle4",
+                "FiberBundle1,FiberBundle2,FiberBundle3,FiberBundle4"
             )
             if not ok:
                 return
@@ -218,7 +218,7 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         if not filePattern and dataRoot:
             filePattern, ok = self._ask_text("Pattern de fichier (optionnel)",
                                              "Utilise {case} comme placeholder. Ex: {case}.vtp ou {case}.vtk",
-                                             "{case}.vtp")
+                                             "{case}.vtk")
             if not ok:
                 filePattern = ""
 
