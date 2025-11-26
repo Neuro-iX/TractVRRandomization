@@ -40,7 +40,8 @@ REGISTRY_HEADER = [
     "CreatedAtISO", "ParticipantID",
     "Session1_Mode", "Session2_Mode",
     "Session1_TaskOrder", "Session2_TaskOrder",
-    "DataRoot", "FilePattern", "HasCaseFiles"
+    "DataRoot", "FilePattern", "RefPattern", "SegPattern",
+    "HasCaseFiles"
 ]
 
 
@@ -212,32 +213,61 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             dataRoot, ok = self._ask_text("Dossier des fibres (optionnel)", "Chemin du dossier contenant les fichiers de fibres :", "")
             if not ok:
                 dataRoot = ""
-        filePattern = ""
+        filePatternNoisy = ""
         if hasattr(self.ui, "filePatternLineEdit") and self.ui.filePatternLineEdit:
-            filePattern = (self.ui.filePatternLineEdit.text or "").strip()
-        if not filePattern and dataRoot:
-            filePattern, ok = self._ask_text("Pattern de fichier (optionnel)",
-                                             "Utilise {case} comme placeholder. Ex: {case}.vtp ou {case}.vtk",
-                                             "{case}.vtk")
+            filePatternNoisy = (self.ui.filePatternLineEdit.text or "").strip()
+        if not filePatternNoisy and dataRoot:
+            filePatternNoisy, ok = self._ask_text(
+                "Pattern fibres à nettoyer (optionnel)",
+                "Utilise {case} comme placeholder. Ex: {case}.vtk",
+                "{case}.vtk"
+            )
             if not ok:
-                filePattern = ""
+                filePatternNoisy = ""
+
+        # 3bis) RefPattern (fibres clean) et SegPattern (segmentation .seg.nrrd)
+        refPattern = ""
+        segPattern = ""
+
+        if dataRoot:
+            # pattern pour les fibres de référence clean
+            refPattern, ok = self._ask_text(
+                "Pattern fibres de référence (optionnel)",
+                "Utilise {case} comme placeholder. Ex: {case}_clean.vtk",
+                "{case}_clean.vtk"
+            )
+            if not ok:
+                refPattern = ""
+
+            # pattern pour la segmentation .seg.nrrd
+            segPattern, ok = self._ask_text(
+                "Pattern segmentation (optionnel)",
+                "Utilise {case} comme placeholder. Ex: {case}_seg.seg.nrrd",
+                "{case}_seg.seg.nrrd"
+            )
+            if not ok:
+                segPattern = ""
 
         # 4) CaseFiles si dataRoot+pattern sont fournis (pour les 4 cas de base uniquement)
         caseFiles: Optional[Dict[str, str]] = None
-        if dataRoot and filePattern:
+        if dataRoot and filePatternNoisy:
             mapping: Dict[str, str] = {}
             for c in base_cases:
-                p = os.path.join(dataRoot, filePattern.format(case=c))
+                p = os.path.join(dataRoot, filePatternNoisy.format(case=c))
                 mapping[c] = p
             caseFiles = mapping
 
         # 5) Générer plan (avec contrainte 4 → 6 = 4 + 2 répétitions)
         try:
             plan = self.logic.make_random_plan_with_repeats(
-                base_cases=base_cases, participant_id=pid,
-                data_root=dataRoot, file_pattern=filePattern,
-                case_files=caseFiles
-            )
+            base_cases=base_cases,
+            participant_id=pid,
+            data_root=dataRoot,
+            file_pattern=filePatternNoisy,   # fibres à nettoyer
+            ref_pattern=refPattern,          # fibres clean
+            seg_pattern=segPattern,          # segmentation .seg.nrrd
+            case_files=caseFiles
+        )
         except Exception as e:
             slicer.util.errorDisplay(f"Erreur lors de la randomisation: {e}")
             return
@@ -333,6 +363,8 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
         participant_id: str,
         data_root: str = "",
         file_pattern: str = "",
+        ref_pattern: str = "",
+        seg_pattern: str = "",
         case_files: Optional[Dict[str, str]] = None
     ) -> dict:
         """
@@ -371,10 +403,17 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
         if data_root:
             plan["DataRoot"] = data_root
         if file_pattern:
+            # pattern pour les fibres à nettoyer (.vtk noisy)
             plan["FilePattern"] = file_pattern
+        if ref_pattern:
+            # pattern pour les fibres de référence clean (.vtk)
+            plan["RefPattern"] = ref_pattern
+        if seg_pattern:
+            # pattern pour la segmentation (.seg.nrrd)
+            plan["SegPattern"] = seg_pattern
         if case_files:
-            # mapping seulement pour les 4 cas de base : les répétitions réutilisent le même nom de cas
-            plan["CaseFiles"] = case_files  # dict: {caseName: absolutePath} pour les 4
+            # mapping seulement pour les 4 cas de base (optionnel)
+            plan["CaseFiles"] = case_files
 
         # Sauvegardes
         self._save_plan_json(plan)
@@ -403,5 +442,7 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
                 ",".join(plan["Session2_TaskOrder"]),
                 plan.get("DataRoot", ""),
                 plan.get("FilePattern", ""),
+                plan.get("RefPattern", ""),
+                plan.get("SegPattern", ""),
                 "1" if plan.get("CaseFiles") else "0",
             ])
