@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 TractVRRandomization.py
-Randomisation + plan par participant (JSON) + registry.csv
-Inclut DataRoot/FilePattern/CaseFiles pour chargement auto dans TractDesktop/TractVR.
-Compatible Python 3.9 (Slicer 5.x) : pas d’operator “|” dans les annotations.
+Handles randomization, participant-specific planning (JSON), and registry.csv generation.
+Includes DataRoot, FilePattern, and CaseFiles for automatic loading in TractDesktop_UserStudy and TractVR_UserStudy.
+Compatible with Python 3.9 (Slicer 5.x)
 """
 
 import os
@@ -11,7 +11,7 @@ import csv
 import json
 import random
 from datetime import datetime
-from typing import Optional, Dict, List, Tuple  # <-- IMPORTANT pour Python 3.9
+from typing import Optional, Dict, List, Tuple  
 
 import qt
 import slicer
@@ -25,9 +25,6 @@ from slicer.util import VTKObservationMixin
 
 
 
-# --------------------------
-# Emplacements persistants
-# --------------------------
 APP_DATA_DIR = os.path.join(
     qt.QStandardPaths.writableLocation(qt.QStandardPaths.AppDataLocation),
     "TractVRRandomization"
@@ -54,17 +51,17 @@ class TractVRRandomization(ScriptedLoadableModule):
         self.parent.title = _("TractVRRandomization")
         self.parent.categories = ["Utilities"]
         self.parent.dependencies = []
-        self.parent.contributors = ["Tina N. H. N."]
+        self.parent.contributors = ["Tina Nantenaina (Neuro-iX lab), Sylvain Bouix (Neuro-iX lab), Jarrett Rushmore (Boston University)"]
         self.parent.helpText = _(
-            "Génère des plans randomisés par participant (Desktop/VR), "
-            "sauvegarde un JSON, maintient un registre CSV, et peut renseigner "
-            "DataRoot/FilePattern/CaseFiles pour chargement automatique des fibres."
+            "Generates randomized participant-specific plans (Desktop/VR), "
+            "saves a JSON file, maintains a CSV registry, and can populate "
+            "DataRoot/FilePattern/CaseFiles for automatic fiber loading."
         )
-        self.parent.acknowledgementText = _("Merci à 3D Slicer / Kitware / ÉTS")
+        self.parent.acknowledgementText = _("Thanks to 3D Slicer / Kitware / ÉTS")
 
 
 # ==========================================================
-# Widget (GUI branchée sur ton .ui)
+# Widget 
 # ==========================================================
 class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
@@ -76,28 +73,25 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
     # ---------- Helpers UI compatibles Qt ----------
     def _ask_text(self, title, label, default=""):
-        """Retourne (text, ok) de manière robuste selon bindings Qt."""
+        """Returns (text, ok) across different Qt bindings"""
         out = qt.QInputDialog.getText(slicer.util.mainWindow(), title, label, qt.QLineEdit.Normal, default)
         if isinstance(out, tuple):
-            # (str, ok)
             if len(out) >= 2:
                 return str(out[0]), bool(out[1])
             return str(out[0]), True
-        # PySide peut renvoyer juste un str (rare) -> on considère ok=True si non vide
         return str(out), True if out else False
 
     def _ask_multiline(self, title, label, default=""):
-        """Retourne (text, ok) pour getMultiLineText sans se tromper de signature."""
+        """Returns (text, ok) for getMultiLineText without calling it with the wrong signature"""
         out = qt.QInputDialog.getMultiLineText(slicer.util.mainWindow(), title, label, default)
         if isinstance(out, tuple):
-            # (str, ok)
             if len(out) >= 2:
                 return str(out[0]), bool(out[1])
             return str(out[0]), True
         return str(out), True if out else False
 
     def _choose_dir(self, start_dir=""):
-        dlg = qt.QFileDialog(slicer.util.mainWindow(), "Choisir un dossier de données")
+        dlg = qt.QFileDialog(slicer.util.mainWindow(), "Select a data folder")
         dlg.setFileMode(qt.QFileDialog.Directory)
         if start_dir and os.path.isdir(start_dir):
             dlg.setDirectory(start_dir)
@@ -109,7 +103,7 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
     # ---------- Setup ----------
     def setup(self) -> None:
-        """Charge le .ui et connecte les boutons."""
+        """Loads the .ui file and connects the buttons"""
         super().setup()
 
         uiWidget = slicer.util.loadUI(self.resourcePath("UI/TractVRRandomization.ui"))
@@ -119,9 +113,9 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
         self.logic = TractVRRandomizationLogic()
 
-        # Boutons (assignButton obligatoire)
+        # Buttons
         if not hasattr(self.ui, "assignButton"):
-            raise RuntimeError("Ton .ui doit contenir un bouton 'assignButton' (ObjectName).")
+            raise RuntimeError("The .ui file must contain a button called 'assignButton' (ObjectName).")
         self.ui.assignButton.clicked.connect(self.onAssignParticipant)
 
         if hasattr(self.ui, "openFolderButton"):
@@ -130,10 +124,10 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         if hasattr(self.ui, "browseDataRootButton"):
             self.ui.browseDataRootButton.clicked.connect(self.onBrowseDataRoot)
 
-        self._log(f"Dossier AppData : {APP_DATA_DIR}")
+        self._log(f"Folder AppData : {APP_DATA_DIR}")
         self._ensure_registry_header()
         d, v = self.logic.count_balance_session1()
-        self._log(f"Équilibrage actuel Session 1 → Desktop: {d} / VR: {v}")
+        self._log(f"Current Session 1 balance -> Desktop: {d} / VR: {v}")
 
     def _log(self, text: str):
         if hasattr(self.ui, "statusText") and self.ui.statusText:
@@ -150,7 +144,7 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             with open(REGISTRY_CSV, "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 w.writerow(REGISTRY_HEADER)
-            self._log("Registre créé (nouveau).")
+            self._log("Register created (new).")
 
     def onOpenFolder(self):
         qt.QDesktopServices.openUrl(qt.QUrl.fromLocalFile(APP_DATA_DIR))
@@ -163,9 +157,8 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         if path and hasattr(self.ui, "dataRootLineEdit") and self.ui.dataRootLineEdit:
             self.ui.dataRootLineEdit.text = path
 
-    # ---------- Action principale : générer un plan ----------
+    # ---------- Main action: generate a plan ----------
     def onAssignParticipant(self):
-        # 1) Cas (on récupère ce que l’utilisateur fournit)
         cases: List[str] = []
         if hasattr(self.ui, "casesLineEdit") and self.ui.casesLineEdit:
             text = (self.ui.casesLineEdit.text or "").strip()
@@ -174,43 +167,42 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
         if not cases:
             casesCsv, ok = self._ask_multiline(
-                "Liste des cas",
-                "Entrez les identifiants de cas (séparés par des virgules)\n"
-                "ex: FiberBundle1,FiberBundle2,FiberBundle3,FiberBundle4",
+                "Case list",
+                "Enter the case IDs (comma-separated)\n"
+                "e.g.: FiberBundle1,FiberBundle2,FiberBundle3,FiberBundle4",
                 "FiberBundle1,FiberBundle2,FiberBundle3,FiberBundle4"
             )
             if not ok:
                 return
             cases = [c.strip() for c in (casesCsv or "").split(",") if c.strip()]
 
-        # --- NOUVEAU : on force une base de 4 cas ---
         if len(cases) < 4:
-            slicer.util.errorDisplay("Il faut au moins 4 cas pour construire 6 essais (avec 2 répétitions).")
+            slicer.util.errorDisplay("You need at least 4 cases to create 6 trials (with 2 repeated cases)")
             return
         if len(cases) > 4:
             base_cases = random.sample(cases, 4)
-            self._log(f"Plus de 4 cas fournis → 4 tirés au hasard: {', '.join(base_cases)}")
+            self._log(f"More than 4 cases were provided : 4 were randomly selected: {', '.join(base_cases)}")
         else:
             base_cases = list(cases)
 
-        # 2) ParticipantID
+        # ParticipantID
         pid = ""
         if hasattr(self.ui, "pidLineEdit") and self.ui.pidLineEdit:
             pid = (self.ui.pidLineEdit.text or "").strip()
         if not pid:
-            pidText, ok = self._ask_text("ParticipantID (optionnel)", "Laisser vide pour auto-générer (ex: P20251110-001) :", "")
+            pidText, ok = self._ask_text("ParticipantID (optional)", "Leave blank to auto-generate (ex: P20251110-001) :", "")
             if not ok:
                 return
             pid = (pidText or "").strip()
         if not pid:
             pid = self.logic.make_participant_id()
 
-        # 3) DataRoot / FilePattern (optionnels)
+        # DataRoot / FilePattern (optionals)
         dataRoot = ""
         if hasattr(self.ui, "dataRootLineEdit") and self.ui.dataRootLineEdit:
             dataRoot = (self.ui.dataRootLineEdit.text or "").strip()
         if not dataRoot:
-            dataRoot, ok = self._ask_text("Dossier des fibres (optionnel)", "Chemin du dossier contenant les fichiers de fibres :", "")
+            dataRoot, ok = self._ask_text("Fiber folder (optional)", "Path to the folder containing the fiber files :", "")
             if not ok:
                 dataRoot = ""
         filePatternNoisy = ""
@@ -218,37 +210,33 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             filePatternNoisy = (self.ui.filePatternLineEdit.text or "").strip()
         if not filePatternNoisy and dataRoot:
             filePatternNoisy, ok = self._ask_text(
-                "Pattern fibres à nettoyer (optionnel)",
-                "Utilise {case} comme placeholder. Ex: {case}.vtk",
+                "Fiber bundle pattern to clean (optional)",
+                "Uses {case} as a placeholder. Example: {case}.vtk",
                 "{case}.vtk"
             )
             if not ok:
                 filePatternNoisy = ""
 
-        # 3bis) RefPattern (fibres clean) et SegPattern (segmentation .seg.nrrd)
         refPattern = ""
         segPattern = ""
 
         if dataRoot:
-            # pattern pour les fibres de référence clean
             refPattern, ok = self._ask_text(
-                "Pattern fibres de référence (optionnel)",
-                "Utilise {case} comme placeholder. Ex: {case}_clean.vtk",
+                "Reference fiber bundle pattern (optional)",
+                "Uses {case} as a placeholder. Example: {case}_clean.vtk",
                 "{case}_clean.vtk"
             )
             if not ok:
                 refPattern = ""
 
-            # pattern pour la segmentation .seg.nrrd
             segPattern, ok = self._ask_text(
-                "Pattern segmentation (optionnel)",
-                "Utilise {case} comme placeholder. Ex: {case}_seg.seg.nrrd",
+                "Segmentation pattern (optional)",
+                "Uses {case} as a placeholder. Example: {case}_seg.seg.nrrd",
                 "{case}_seg.seg.nrrd"
             )
             if not ok:
                 segPattern = ""
 
-        # 4) CaseFiles si dataRoot+pattern sont fournis (pour les 4 cas de base uniquement)
         caseFiles: Optional[Dict[str, str]] = None
         if dataRoot and filePatternNoisy:
             mapping: Dict[str, str] = {}
@@ -257,23 +245,23 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
                 mapping[c] = p
             caseFiles = mapping
 
-        # 5) Générer plan (avec contrainte 4 → 6 = 4 + 2 répétitions)
+        # Generate the plan (with the 4-to-6 constraint: 4 cases + 2 repeated cases)
         try:
             plan = self.logic.make_random_plan_with_repeats(
             base_cases=base_cases,
             participant_id=pid,
             data_root=dataRoot,
-            file_pattern=filePatternNoisy,   # fibres à nettoyer
-            ref_pattern=refPattern,          # fibres clean
+            file_pattern=filePatternNoisy,   # Fiber to clean
+            ref_pattern=refPattern,          # Fiber cleaned
             seg_pattern=segPattern,          # segmentation .seg.nrrd
             case_files=caseFiles
         )
         except Exception as e:
-            slicer.util.errorDisplay(f"Erreur lors de la randomisation: {e}")
+            slicer.util.errorDisplay(f"Error during randomization: {e}")
             return
 
-        # 6) Feedback
-        self._log(f"✅ Participant: {plan['ParticipantID']}")
+        # Feedback
+        self._log(f"Participant: {plan['ParticipantID']}")
         self._log(f"BaseCases (4): {', '.join(plan['BaseCases'])}")
         self._log(f"SixCases (6): {', '.join(plan['SixCases'])}")
         self._log(f"Session1_Mode: {plan['Session1_Mode']}")
@@ -287,30 +275,30 @@ class TractVRRandomizationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         if plan.get("CaseFiles"):
             self._log("CaseFiles: défini (4 cas de base)")
         self._log(f"JSON: {os.path.join(PID_JSON_DIR, plan['ParticipantID'] + '.json')}")
-        self._log("Plan enregistré.\n")
+        self._log("Plan saved.\n")
 
         qt.QMessageBox.information(
             slicer.util.mainWindow(),
             "TractVRRandomization",
-            f"Plan généré pour {plan['ParticipantID']}\n"
+            f"Plan generated for {plan['ParticipantID']}\n"
             f"- BaseCases (4) : {', '.join(plan['BaseCases'])}\n"
             f"- SixCases  (6) : {', '.join(plan['SixCases'])}\n\n"
             f"- {plan['Session1_Mode']} : {', '.join(plan['Session1_TaskOrder'])}\n"
             f"- {plan['Session2_Mode']} : {', '.join(plan['Session2_TaskOrder'])}\n\n"
-            f"Le JSON a été sauvegardé."
+            f"JSON file is saved."
         )
 
 
 # ==========================================================
-# Logic (aucune dépendance UI)
+# Logic 
 # ==========================================================
 class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
     """
-    - fabrique un ParticipantID unique (par jour : PYYYYMMDD-###)
-    - équilibre Session1 (Desktop/VR) via le registre
-    - randomise 2 ordres de cas (S1 et S2)
-    - sauvegarde JSON + ligne dans le registre
-    - enregistre éventuellement DataRoot/FilePattern/CaseFiles
+    - generates a unique ParticipantID for the day (PYYYYMMDD-###)
+    - balances Session 1 assignment (Desktop/VR) using the registry
+    - randomizes two case orders (S1 and S2)
+    - saves the JSON file and adds a row to the registry
+    - optionally records DataRoot/FilePattern/CaseFiles
     """
 
     def __init__(self):
@@ -334,7 +322,7 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
                         counter += 1
         return f"P{today}-{counter+1:03d}"
 
-    # Équilibrage Session 1
+    # Session 1 balancing
     def count_balance_session1(self) -> Tuple[int, int]:
         s1d = s1v = 0
         if os.path.exists(REGISTRY_CSV):
@@ -356,7 +344,6 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
             return "VR"
         return random.choice(["Desktop", "VR"])
 
-    # --------- NOUVEAU : plan avec 4 cas de base + 2 répétitions (sans remise) ---------
     def make_random_plan_with_repeats(
         self,
         base_cases: List[str],
@@ -368,54 +355,47 @@ class TractVRRandomizationLogic(ScriptedLoadableModuleLogic):
         case_files: Optional[Dict[str, str]] = None
     ) -> dict:
         """
-        Contrainte :
-          - base_cases: exactement 4 cas distincts (sinon ValueError)
-          - on crée six_cases = base_cases + 2 cas répétés tirés SANS remise (donc 2 cas distincts sont répétés 1x)
-          - Session1/Session2 utilisent la même 'six_cases' mais dans un ordre différent
+        Constraint:
+        - base_cases must contain exactly 4 distinct cases (otherwise a ValueError is raised)
+        - six_cases is built from base_cases + 2 repeated cases sampled without replacement (so 2 distinct cases are repeated once each)
+        - Session 1 and Session 2 use the same 'six_cases', but in a different order
         """
         if len(base_cases) != 4:
-            raise ValueError("base_cases doit contenir exactement 4 cas.")
+            raise ValueError("base_cases must contain exactly 4 cases")
 
-        # Tirer 2 cas distincts à répéter une fois chacun
-        repeats = random.sample(base_cases, 2)   # sans remise → 2 cas distincts
-        six_cases = list(base_cases) + repeats   # total = 6 (avec 2 répétitions)
+        repeats = random.sample(base_cases, 2)   # Sampled without replacement -> 2 distinct cases
+        six_cases = list(base_cases) + repeats   # total = 6 
 
-        # Modes de session équilibrés
         s1_mode = self._choose_s1_mode_balanced()
         s2_mode = "VR" if s1_mode == "Desktop" else "Desktop"
 
-        # Deux ordres indépendants (mêmes 6 cas, ordres différents)
         s1_order = random.sample(six_cases, k=len(six_cases))
         s2_order = random.sample(six_cases, k=len(six_cases))
 
         plan = {
             "ParticipantID": participant_id,
             "CreatedAt": datetime.now().isoformat(timespec="seconds"),
-            "BaseCases": base_cases,   # 4 cas
-            "SixCases": six_cases,     # 6 cas (4 + 2 répétés)
+            "BaseCases": base_cases,   # 4 cases
+            "SixCases": six_cases,     # 6 cases (4 + 2 repeated)
             "Session1_Mode": s1_mode,
             "Session2_Mode": s2_mode,
             "Session1_TaskOrder": s1_order,
             "Session2_TaskOrder": s2_order,
         }
 
-        # Métadonnées pour chargement automatique
+    
         if data_root:
             plan["DataRoot"] = data_root
         if file_pattern:
-            # pattern pour les fibres à nettoyer (.vtk noisy)
             plan["FilePattern"] = file_pattern
         if ref_pattern:
-            # pattern pour les fibres de référence clean (.vtk)
             plan["RefPattern"] = ref_pattern
         if seg_pattern:
-            # pattern pour la segmentation (.seg.nrrd)
             plan["SegPattern"] = seg_pattern
         if case_files:
-            # mapping seulement pour les 4 cas de base (optionnel)
             plan["CaseFiles"] = case_files
 
-        # Sauvegardes
+        # Saving
         self._save_plan_json(plan)
         self._append_registry(plan)
         return plan
